@@ -63,6 +63,9 @@ def parse_args():
         "--n_balls", type=int, default=5, help="Number of balls in the simulation."
     )
     parser.add_argument(
+        "--n_edge_types", type=int, default=2, help="Number of edge types in the simulation."
+    )
+    parser.add_argument(
         "--n_states", type=int, default=1, help="Number of states in the simulation."
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed.")
@@ -74,6 +77,12 @@ def parse_args():
         type=float,
         default=0.1,
         help="Temperature of SpringSim simulation.",
+    )
+    parser.add_argument(
+        "--sparsity",
+        type=float,
+        default=0.5,
+        help="Sparsity of SpringSim simulation.",
     )
     parser.add_argument(
         "--temperature_dist",
@@ -146,8 +155,7 @@ def parse_args():
     print(args)
     return args
 
-
-def generate_dataset(num_sims, length, sample_freq, sampled_sims=None):
+def generate_dataset(num_sims, length, sample_freq, edges=None, sampled_sims=None):
     if not sampled_sims is None:
         assert len(sampled_sims) == num_sims
 
@@ -155,19 +163,6 @@ def generate_dataset(num_sims, length, sample_freq, sampled_sims=None):
     vel_all = list()
     state_all = list()
     edges_all = list()
-
-    if args.fixed_connectivity:
-        edges = sim.get_edges(
-            undirected=args.undirected,
-            influencer=args.influencer_particle,
-            uninfluenced=args.uninfluenced_particle,
-            confounder=args.confounder,
-            num_max_edges=args.num_max_edges
-        )
-        print('\x1b[5;30;41m' + "Edges are fixed to be: " + '\x1b[0m')
-        print(edges)
-    else:
-        edges = None
     counter = 0
     if args.state_type == 'dynam' or args.state_type == 'region' or args.state_type =='collision':
         with tqdm(total=num_sims) as pbar:
@@ -184,20 +179,31 @@ def generate_dataset(num_sims, length, sample_freq, sampled_sims=None):
                     num_max_edges=args.num_max_edges
                 )
                 T = length//sample_freq-1
+                if T > 120:
+                    T //= 2
                 counts_bad = 0
                 for el in state[:T,:].transpose((1,0)):
-                    states = np.sum(el)
-                    prop = states/T
-                    if not(prop > 0.25 and prop < 0.75):
+                    #states = np.sum(el)
+                    #print(el)
+                    #prop = states/T
+                    #print(prop)
+                    #if not(prop > 0.2 and prop < 0.8):
+                    #    counts_bad += 1
+                    _, counts = np.unique(el, return_counts=True)
+                    prop = counts/T
+                    if (prop.shape[0] != args.n_states or (prop < 0.1).any() or ((prop < 0.05).any() and args.num_states==4) or (el[:5]==1).any()):
                         counts_bad += 1
-                prop = counts_bad/state.shape[0]
-                if prop < 1e-3:
+                prop = counts_bad/state.shape[1]
+                if prop <= 1e-3 or (prop <=0.25 and args.fixed_connectivity) or (prop <=0.2 and args.n_balls>=10 and args.state_type=='collision'):
                     loc_all.append(loc)
                     vel_all.append(vel)
                     state_all.append(state)
                     edges_all.append(edges)
                     counter += 1
                     pbar.update(1)
+                if not args.fixed_connectivity:
+                    edges = None
+            
     else:
         for i in tqdm(range(num_sims)):
             if not sampled_sims is None:
@@ -233,7 +239,6 @@ def generate_dataset(num_sims, length, sample_freq, sampled_sims=None):
 if __name__ == "__main__":
 
     args = parse_args()
-
     if args.temperature_dist:
         categories = utils.get_categorical_temperature_prior(
                 args.temperature_alpha, 
@@ -249,6 +254,7 @@ if __name__ == "__main__":
                 noise_var=0.0,
                 n_balls=args.n_balls,
                 interaction_strength=args.temperature,
+                num_edge_types=args.n_edge_types,
                 n_states=args.n_states,
                 box_size=args.box_size,
                 state_type=args.state_type
@@ -306,12 +312,25 @@ if __name__ == "__main__":
     print(suffix)
 
     np.random.seed(args.seed)
-
+    if args.fixed_connectivity:
+        edges = sim.get_edges(
+            undirected=args.undirected,
+            influencer=args.influencer_particle,
+            uninfluenced=args.uninfluenced_particle,
+            confounder=args.confounder,
+            spring_prob=[args.sparsity, 0, 1-args.sparsity],
+            num_max_edges=args.num_max_edges
+        )
+        print('\x1b[5;30;41m' + "Edges are fixed to be: " + '\x1b[0m')
+        print(edges)
+    else:
+        edges = None
     print("Generating {} training simulations".format(args.num_train))
     loc_train, vel_train, state_train, edges_train = generate_dataset(
         args.num_train,
         args.length,
         args.sample_freq,
+        edges,
         sampled_sims=(None if not args.temperature_dist else sims_train),
     )
 
@@ -320,6 +339,7 @@ if __name__ == "__main__":
         args.num_valid,
         args.length,
         args.sample_freq,
+        edges,
         sampled_sims=(None if not args.temperature_dist else sims_valid),
     )
 
@@ -328,6 +348,7 @@ if __name__ == "__main__":
         args.num_test,
         args.length_test,
         args.sample_freq,
+        edges,
         sampled_sims=(None if not args.temperature_dist else sims_test),
     )
 

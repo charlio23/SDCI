@@ -1,0 +1,8 @@
+numpy==1.26
+matplotlib==3.10.7
+networkx==3.4.2
+scikit-learn==1.7.2
+tensorboardX==2.6.4
+torch==1.13.1+cu117
+torch-scatter==2.1.1+pt113cu117
+tqdm==4.67.1

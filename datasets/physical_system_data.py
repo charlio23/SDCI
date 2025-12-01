@@ -16,6 +16,7 @@ class SpringSim(object):
         loc_std=0.5,
         vel_norm=0.5,
         interaction_strength=0.1,
+        num_edge_types = 2,
         noise_var=0.0,
         n_states=1,
         state_type='indep',
@@ -27,12 +28,12 @@ class SpringSim(object):
         self.loc_std = loc_std
         self.vel_norm = vel_norm
         self.interaction_strength = interaction_strength
+        self.num_edge_types = num_edge_types
         self.noise_var = noise_var
         self.change_state_freq = change_state_freq
         # State: indep | stoch | dynam | region | collision
         self.state_type = state_type
-
-        self._spring_types = np.array([0.0, 0.5, 1.0])
+        self._spring_types = np.array([0, 0, 1])
         self._delta_T = 0.001
         self._max_F = 0.1 / self._delta_T
         self.transition_mat_states = None
@@ -107,8 +108,15 @@ class SpringSim(object):
             assert np.all(state < self.n_states)
         
         if self.state_type == 'region':
-            left = loc[0,:] > 0
-            state = left.astype(int)
+            if self.n_states == 2:
+                left = loc[0,:] > 0
+                state = left.astype(int)
+            elif self.n_states == 4:
+                left = loc[0,:] > 0
+                top = loc[1,:] > 0
+                state = 2*top.astype(int) + left.astype(int)
+            else:
+                raise NotImplementedError("Num states " + self.n_states + " is not implemented.")
 
         return loc, vel, state
 
@@ -125,39 +133,36 @@ class SpringSim(object):
         dist = A_norm + B_norm - 2 * A.dot(B.transpose())
         return dist
 
+    def columns_same(self, edges):
+        if edges is None:
+            return True
+        for k_1 in range(self.n_states):
+            for k_2 in range(k_1 + 1, self.n_states):
+                for i in range(self.n_balls):
+                    if np.array_equal(edges[k_1][:, i], edges[k_2][:, i]):
+                        return True
+        return False
+
     def sample_edges(self, spring_prob, num_max_edges):
         # Sample edges
-        """ Method returns edges as follows:
-            Set of K matrices, where each row denotes the causal effects.
-            For query, each state selects columns from set of K.
-            Example of query: CSG for K=2
-                [[[0. 0. 0. 0. 0.]
-                [0. 0. 0. 0. 0.]
-                [0. 0. 0. 0. 0.]
-                [0. 0. 0. 0. 0.]
-                [0. 0. 0. 0. 0.]]
-
-                [[0. 0. 1. 1. 0.]
-                [1. 0. 1. 1. 0.]
-                [0. 1. 0. 0. 1.]
-                [0. 0. 0. 0. 0.]
-                [0. 0. 0. 0. 0.]]]
-            For s= [0 1 0 1 0], the graph is:
-            [[0. 0. 0. 1. 0.]
-             [0. 0. 0. 1. 0.]
-             [0. 1. 0. 0. 0.]
-             [0. 0. 0. 0. 0.]
-             [0. 0. 0. 0. 0.]]
-        """
+        # Adjacency matrix
+        # i -> j: edges[j,i] = 1
         if (num_max_edges is None) or (num_max_edges==-1):
-            edges = np.random.choice(
-                self._spring_types, size=(self.n_states, self.n_balls, self.n_balls), p=spring_prob
-            )
+            edges = None
+            while self.columns_same(edges):
+                edges = np.random.choice(
+                    self._spring_types, size=(self.n_states, self.n_balls, self.n_balls), p=spring_prob
+                )
+            if self.num_edge_types > 2:
+                edge_types = np.random.randint(1,self.num_edge_types, size=(self.n_states, self.n_balls, self.n_balls))
+                edges[edges==1] = edge_types[edges==1]
         else:
+            edge_types = np.random.randint(1,self.num_edge_types, size=(self.n_states, self.n_balls, self.n_balls))
             edges = np.zeros((self.n_states, self.n_balls, self.n_balls))
             for idx in range(1, self.n_states):
                 for i in range(self.n_balls):
-                    edges[idx,:,i][np.random.choice(self.n_balls, size=num_max_edges, replace=False)] = 1
+                    indices = np.random.choice(self.n_balls, size=num_max_edges, replace=False)
+                    edges[idx,:,i][indices] = edge_types[idx,:,i][indices]
         for i in range(self.n_states):
             np.fill_diagonal(edges[i], 0)
         return edges
@@ -172,7 +177,6 @@ class SpringSim(object):
         num_max_edges=None
     ):
         edges = self.sample_edges(spring_prob,num_max_edges)
-
         if undirected:
             edges = (
                 np.tril(edges) + np.tril(edges, -1).T
@@ -255,37 +259,34 @@ class SpringSim(object):
 
         # disables division by zero warning, since I fix it with fill_diagonal
         with np.errstate(divide="ignore"):
-            #print(edges)
-            state_next = np.array([0,1,0,1,0])
-            forces_size = -self.interaction_strength * edges.transpose(0,2,1)[state_next, range(self.n_balls)].T
+            ## Spring effect
+            forces_size = -self.interaction_strength * (edges==1).transpose(0,2,1)[state_next, range(self.n_balls)].T
+            displacement_vector = np.concatenate((
+                    np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
+                        1, n, n
+                    ),
+                    np.subtract.outer(loc_next[1, :], loc_next[1, :]).reshape(
+                        1, n, n)))
             np.fill_diagonal(
                 forces_size, 0
             )  # self forces are zero (fixes division by zero)
-            print(forces_size)
-            print(state_next, loc_next[0,:])
-            print(forces_size.reshape(n, n)*np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
-                            n, n))
-            print(np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
-                            n, n))
             F = (
-                forces_size.reshape(1, n, n)
-                * np.concatenate(
-                    (
-                        np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
-                            1, n, n
-                        ),
-                        np.subtract.outer(loc_next[1, :], loc_next[1, :]).reshape(
-                            1, n, n
-                        ),
-                    )
-                )
-            ).sum(
-                axis=-1
+                forces_size.reshape(1, n, n)*displacement_vector).sum(axis=-1
             )  # sum over influence from different particles to get their joint force
-            print(F[0])
+            ## Magnetic effect
+            if self.num_edge_types == 3:
+                forces_size = (1/(4*np.pi))*(1/np.linalg.norm(displacement_vector,axis=0)**2) * (edges==2).transpose(0,2,1)[state_next, range(self.n_balls)].T
+                np.fill_diagonal(
+                    forces_size, 0
+                )  # self forces are zero (fixes division by zero)
+                
+                F += (
+                    forces_size.reshape(1, n, n) * displacement_vector).sum(axis=-1
+                )  # sum over influence from different particles to get their joint force
             F[F > self._max_F] = self._max_F
             F[F < -self._max_F] = -self._max_F
-            exit()
+            #print(F)
+            #exit()
             vel_next += self._delta_T * F
             # run leapfrog
             for i in range(1, T):
@@ -305,23 +306,30 @@ class SpringSim(object):
                     loc[counter, :, :], vel[counter, :, :], state[counter, :] = loc_next, vel_next, state_next
                     counter += 1
 
-                forces_size = -self.interaction_strength * edges.transpose(0,2,1)[state_next, range(self.n_balls)].T
-                np.fill_diagonal(forces_size, 0)
-                # assert (np.abs(forces_size[diag_mask]).min() > 1e-10)
-
+                ## Spring effect
+                forces_size = -self.interaction_strength * (edges==1).transpose(0,2,1)[state_next, range(self.n_balls)].T
+                displacement_vector = np.concatenate((
+                        np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
+                            1, n, n
+                        ),
+                        np.subtract.outer(loc_next[1, :], loc_next[1, :]).reshape(
+                            1, n, n)))
+                np.fill_diagonal(
+                    forces_size, 0
+                )  # self forces are zero (fixes division by zero)
                 F = (
-                    forces_size.reshape(1, n, n)
-                    * np.concatenate(
-                        (
-                            np.subtract.outer(loc_next[0, :], loc_next[0, :]).reshape(
-                                1, n, n
-                            ),
-                            np.subtract.outer(loc_next[1, :], loc_next[1, :]).reshape(
-                                1, n, n
-                            ),
-                        )
-                    )
-                ).sum(axis=-1)
+                    forces_size.reshape(1, n, n)*displacement_vector).sum(axis=-1
+                )  # sum over influence from different particles to get their joint force
+                ## Magnetic effect
+                if self.num_edge_types == 3:
+                    forces_size = (1/(4*np.pi))*(1/np.linalg.norm(displacement_vector,axis=0)**2) * (edges==2).transpose(0,2,1)[state_next, range(self.n_balls)].T
+                    np.fill_diagonal(
+                        forces_size, 0
+                    )  # self forces are zero (fixes division by zero)
+                    
+                    F += (
+                        forces_size.reshape(1, n, n) * displacement_vector).sum(axis=-1
+                    )  # sum over influence from different particles to get their joint force
                 F[F > self._max_F] = self._max_F
                 F[F < -self._max_F] = -self._max_F
                 vel_next += self._delta_T * F
@@ -362,7 +370,7 @@ def update(frame):
 
 
 if __name__ == "__main__":
-    sim = SpringSim(interaction_strength=0.1, n_balls=5, n_states=2, box_size=1., state_type='dynam')
+    sim = SpringSim(interaction_strength=0.5, n_balls=5, num_edge_types=3, n_states=2, box_size=1., state_type='indep')
 
     t = time.time()
     loc, vel, state, edges = sim.sample_trajectory(
@@ -377,17 +385,15 @@ if __name__ == "__main__":
     print("Simulation time: {}".format(time.time() - t))
     sample = state.transpose((1,0))
     #print(np.concatenate([loc[:,0:1,:],state[:,None,:]],1))
-    print(state)
+
     counts_one = 0
     state_freq = []
     for el in sample:
         states = np.unique(el)
-        print(states)
         if len(states) == 1:
             counts_one += 1
         state_freq.append(el.mean())
     #print(counts_one/sample.shape[0])
-    print(state_freq)
     vel_norm = np.sqrt((vel ** 2).sum(axis=1))
     plt.figure()
     axes = plt.gca()
@@ -405,7 +411,7 @@ if __name__ == "__main__":
     writer = Writer(fps=15, metadata=dict(artist="Me"), bitrate=1800)
 
     fig = plt.figure()
-    ax = plt.axes(xlim=(-5, 5), ylim=(-5, 5))
+    ax = plt.axes(xlim=(-1, 1), ylim=(-1, 1))
 
     lines = [
         plt.plot([], [], marker="$" + "{:d}".format(i) + "$", alpha=1, markersize=10)[0]

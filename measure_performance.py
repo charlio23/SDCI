@@ -4,6 +4,7 @@ import time
 from itertools import permutations
 
 import numpy as np
+import scipy.stats
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
@@ -52,10 +53,6 @@ parser.add_argument("--hidden_states", action='store_true', help='use hidden sta
 parser.add_argument("--temperature", default=1, type=float, help='temperature term for state distribution')
 parser.add_argument('--hidden-size', default=256, type=int, metavar='N', help='hidden size of the model')
 parser.add_argument('--dropout', default=0.0, type=float,metavar='DP', help='dropout rate')
-
-
-import numpy as np
-import scipy.stats
 
 
 def mean_confidence_interval(data, confidence=0.95):
