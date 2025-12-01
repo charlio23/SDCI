@@ -1,0 +1,1 @@
+python train_GRN.py --name GRN_region_1_0.8_32_embedding --train_root datasets/sdci_dyngen/ --hidden-dim 32 --num-dims 1 --num-atoms 49 --num-states 2 --epochs 1000 --step_size 350 --sparsity 0.8 --device cuda:2 --kl_mult 1 -b 20 --init_temperature 5 --encoder fixed --lr-encoder 5e-3 --state-decoder region --embedding

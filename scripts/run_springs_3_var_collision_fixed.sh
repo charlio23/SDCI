@@ -1,0 +1,2 @@
+# For collision data, recurrent GRNN state encoders have high variance. Run additional seeds for optimal results.
+python train_springs_hidden.py --name springs_collision_5_2_states_2_edges_fixed --logdir ./runs/ --state-decoder recurrent --train_root datasets/springs_5_var_collision_80_strong_2_states_fixed_3_edges/ --num-states 2 --suffix _springs5_inter0.5_l8100_s10000_oneconnect --num-atoms 5 -b 50 --epochs 500 --step_size 180 --device cuda:1 --init_temperature 5 --num-edge-types 3 --lr-encoder 5e-3 --encoder fixed
